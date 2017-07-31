@@ -32,6 +32,10 @@ namespace mRemoteNG.Tools
 		public RevocationCheckOptions RevocationCheck { get; set; } = RevocationCheckOptions.WholeChain;
 
 		private DisplayContextValue DisplayContext { get; set; }
+
+		/// <summary>
+		/// The parent form to use for any windows spawned by this class.
+		/// </summary>
 		private Form DisplayParentForm { get; set; }
 
 		#region Public Enums
@@ -128,7 +132,6 @@ namespace mRemoteNG.Tools
 			if (string.IsNullOrEmpty(filePath))
 				throw new ArgumentException(@"Cannot be null or empty", nameof(filePath));
 
-			var trustFileInfoPointer = default(IntPtr);
 			var trustDataPointer = default(IntPtr);
 			try
 			{
@@ -148,34 +151,36 @@ namespace mRemoteNG.Tools
 						return WinVerifyTrustResult.ThumbprintNotMatch;
 				}
 
-			    var trustFileInfo = new NativeMethods.WinTrustFileInfo (filePath);
-			    trustFileInfoPointer = Marshal.AllocCoTaskMem(Marshal.SizeOf(trustFileInfo));
-				Marshal.StructureToPtr(trustFileInfo, trustFileInfoPointer, false);
+				using (var winTrustFileInfo = new NativeMethods.WinTrustFileInfo(filePath))
+				{
+					using (var winTrustData = new NativeMethods.WinTrustData(winTrustFileInfo)
+						{
+							dwUIChoice = (uint) Display,
+							fdwRevocationChecks = (uint) RevocationCheck,
+							dwUnionChoice = NativeMethods.WTD_CHOICE_FILE,
+							dwStateAction = NativeMethods.WTD_STATEACTION_IGNORE,
+							dwProvFlags = NativeMethods.WTD_DISABLE_MD2_MD4,
+							dwUIContext = (uint) DisplayContext
+						})
+					{
+						trustDataPointer = Marshal.AllocCoTaskMem(Marshal.SizeOf(winTrustData));
+						Marshal.StructureToPtr(winTrustData, trustDataPointer, false);
 
-			    var trustData = new NativeMethods.WinTrustData
-			    {
-			        dwUIChoice = (uint) Display,
-			        fdwRevocationChecks = (uint) RevocationCheck,
-			        dwUnionChoice = NativeMethods.WTD_CHOICE_FILE,
-			        pFile = trustFileInfoPointer,
-			        dwStateAction = NativeMethods.WTD_STATEACTION_IGNORE,
-			        dwProvFlags = NativeMethods.WTD_DISABLE_MD2_MD4,
-			        dwUIContext = (uint) DisplayContext
-			    };
-			    trustDataPointer = Marshal.AllocCoTaskMem(Marshal.SizeOf(trustData));
-				Marshal.StructureToPtr(trustData, trustDataPointer, false);
+						var windowHandle = DisplayParentForm?.Handle ?? IntPtr.Zero;
 
-			    var windowHandle = DisplayParentForm?.Handle ?? IntPtr.Zero;
-					
-				var trustProviderReturnCode = NativeMethods.WinVerifyTrust(windowHandle, NativeMethods.WINTRUST_ACTION_GENERIC_VERIFY_V2, trustDataPointer);
-				return trustProviderReturnCode;
+						var trustProviderReturnCode = NativeMethods.WinVerifyTrust(windowHandle,
+							NativeMethods.WINTRUST_ACTION_GENERIC_VERIFY_V2, trustDataPointer);
+
+						return trustProviderReturnCode;
+					}
+				}
 			}
 			catch (CryptographicException ex)
 			{
 				var hResultProperty = ex.GetType().GetProperty("HResult", BindingFlags.NonPublic | BindingFlags.Instance);
 				var hResult = Convert.ToInt32(hResultProperty.GetValue(ex, null));
-				return hResult == NativeMethods.CRYPT_E_NO_MATCH 
-					? WinVerifyTrustResult.FileNotSigned 
+				return hResult == NativeMethods.CRYPT_E_NO_MATCH
+					? WinVerifyTrustResult.FileNotSigned
 					: WinVerifyTrustResult.UnhandledException;
 			}
 			catch (Exception)
@@ -186,9 +191,6 @@ namespace mRemoteNG.Tools
 			{
 				if (trustDataPointer != IntPtr.Zero)
 					Marshal.FreeCoTaskMem(trustDataPointer);
-
-				if (trustFileInfoPointer != IntPtr.Zero)
-					Marshal.FreeCoTaskMem(trustFileInfoPointer);
 			}
 		}
 
@@ -200,24 +202,37 @@ namespace mRemoteNG.Tools
 			public static extern WinVerifyTrustResult WinVerifyTrust([In]IntPtr hWnd, [In, MarshalAs(UnmanagedType.LPStruct)]Guid pgActionOID, [In]IntPtr pWVTData);
 				
 			[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-            public class WinTrustData
+            public class WinTrustData : IDisposable
 			{
-				private uint cbStruct;
+				private uint cbStruct = (uint)Marshal.SizeOf(typeof(WinTrustData));
 				public IntPtr pPolicyCallbackData;
 				public IntPtr pSIPClientData;
 				public uint dwUIChoice;
 				public uint fdwRevocationChecks;
 				public uint dwUnionChoice;
-				public IntPtr pFile;
+				private readonly IntPtr FileInfoPtr;
 				public uint dwStateAction;
 				public IntPtr hWVTStateData;
 				public IntPtr pwszURLReference;
 				public uint dwProvFlags;
 				public uint dwUIContext;
 
-				public WinTrustData()
+				public WinTrustData(WinTrustFileInfo winTrustFileInfo)
 				{
-					cbStruct = (uint)Marshal.SizeOf(typeof(WinTrustData));
+					FileInfoPtr = Marshal.AllocCoTaskMem(Marshal.SizeOf(winTrustFileInfo));
+					Marshal.StructureToPtr(winTrustFileInfo, FileInfoPtr, false);
+				}
+
+				private void ReleaseUnmanagedResources()
+				{
+					if (FileInfoPtr != IntPtr.Zero)
+						Marshal.FreeCoTaskMem(FileInfoPtr);
+				}
+
+				public void Dispose()
+				{
+					ReleaseUnmanagedResources();
+					GC.SuppressFinalize(this);
 				}
 			}
 				
