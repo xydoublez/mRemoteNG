@@ -19,9 +19,6 @@ namespace mRemoteNG.Tools
 	/// </summary>
 	public class Authenticode
 	{
-		private string _thumbprint;
-		private int _trustProviderErrorCode;
-
 		/// <summary>
 		/// The style of display to present to the user when verifying trust 
 		/// for an assembly on this system.
@@ -75,15 +72,22 @@ namespace mRemoteNG.Tools
 			Install = NativeMethods.WTD_UICONTEXT_INSTALL
 		}
 
-		public enum StatusValue
+		public enum WinVerifyTrustResult : uint
 		{
-			Unknown = 0,
-			Verified,
+			Verified = 0,
+			ProviderUnknown = 0x800b0001,           // Trust provider is not recognized on this system
+			ActionUnknown = 0x800b0002,         // Trust provider does not support the specified action
+			SubjectFormUnknown = 0x800b0003,        // Trust provider does not support the form specified for the subject
+			SubjectNotTrusted = 0x800b0004,         // Subject failed the specified verification action
+			FileNotSigned = 0x800B0100,         // TRUST_E_NOSIGNATURE - File was not signed
+			SubjectExplicitlyDistrusted = 0x800B0111,   // Signer's certificate is in the Untrusted Publishers store
+			SignatureOrFileCorrupt = 0x80096010,    // TRUST_E_BAD_DIGEST - file was probably corrupt
+			SubjectCertExpired = 0x800B0101,        // CERT_E_EXPIRED - Signer's certificate was expired
+			SubjectCertificateRevoked = 0x800B010C,     // CERT_E_REVOKED Subject's certificate was revoked
+			UntrustedRoot = 0x800B0109,          // CERT_E_UNTRUSTEDROOT - A certification chain processed correctly but terminated in a root certificate that is not trusted by the trust provider.
 			FileNotExist,
 			FileEmpty,
-			NoSignature,
 			ThumbprintNotMatch,
-			TrustProviderError,
 			UnhandledException
 		}
 
@@ -106,12 +110,12 @@ namespace mRemoteNG.Tools
 		}
 		#endregion
 
-		public StatusValue Verify(string filePath)
+		public WinVerifyTrustResult Verify(string filePath)
 		{
 			return Verify(filePath, "");
 		}
 
-		public StatusValue VerifyWithThumbprint(string filePath, string thumbprintToMatch)
+		public WinVerifyTrustResult VerifyWithThumbprint(string filePath, string thumbprintToMatch)
 		{
 			if (string.IsNullOrEmpty(thumbprintToMatch))
 				throw new ArgumentException(@"Cannot be null or empty", nameof(thumbprintToMatch));
@@ -119,7 +123,7 @@ namespace mRemoteNG.Tools
 			return Verify(filePath, thumbprintToMatch);
 		}
 
-		private StatusValue Verify(string filePath, string thumbprintToMatch)
+		private WinVerifyTrustResult Verify(string filePath, string thumbprintToMatch)
 		{
 			if (string.IsNullOrEmpty(filePath))
 				throw new ArgumentException(@"Cannot be null or empty", nameof(filePath));
@@ -130,18 +134,18 @@ namespace mRemoteNG.Tools
 			{
 				var fileInfo = new FileInfo(filePath);
 				if (!fileInfo.Exists)
-					return StatusValue.FileNotExist;
+					return WinVerifyTrustResult.FileNotExist;
 
 				if (fileInfo.Length == 0)
-					return StatusValue.FileEmpty;
+					return WinVerifyTrustResult.FileEmpty;
 					
 				if (!string.IsNullOrEmpty(thumbprintToMatch))
 				{
 					var certificate = X509Certificate.CreateFromSignedFile(filePath);
 					var certificate2 = new X509Certificate2(certificate);
-					_thumbprint = certificate2.Thumbprint;
-					if (_thumbprint != thumbprintToMatch)
-						return StatusValue.ThumbprintNotMatch;
+					var thumbprint = certificate2.Thumbprint;
+					if (thumbprint != thumbprintToMatch)
+						return WinVerifyTrustResult.ThumbprintNotMatch;
 				}
 
 			    var trustFileInfo = new NativeMethods.WinTrustFileInfo (filePath);
@@ -163,26 +167,20 @@ namespace mRemoteNG.Tools
 
 			    var windowHandle = DisplayParentForm?.Handle ?? IntPtr.Zero;
 					
-				_trustProviderErrorCode = NativeMethods.WinVerifyTrust(windowHandle, NativeMethods.WINTRUST_ACTION_GENERIC_VERIFY_V2, trustDataPointer);
-			    // ReSharper disable once SwitchStatementMissingSomeCases
-				switch (_trustProviderErrorCode)
-				{
-					case NativeMethods.TRUST_E_NOSIGNATURE:
-						return StatusValue.NoSignature;
-					case NativeMethods.TRUST_E_SUBJECT_NOT_TRUSTED:
-						break;
-				}
-				return _trustProviderErrorCode != 0 ? StatusValue.TrustProviderError : StatusValue.Verified;
+				var trustProviderReturnCode = NativeMethods.WinVerifyTrust(windowHandle, NativeMethods.WINTRUST_ACTION_GENERIC_VERIFY_V2, trustDataPointer);
+				return trustProviderReturnCode;
 			}
 			catch (CryptographicException ex)
 			{
 				var hResultProperty = ex.GetType().GetProperty("HResult", BindingFlags.NonPublic | BindingFlags.Instance);
 				var hResult = Convert.ToInt32(hResultProperty.GetValue(ex, null));
-				return hResult == NativeMethods.CRYPT_E_NO_MATCH ? StatusValue.NoSignature : StatusValue.UnhandledException;
+				return hResult == NativeMethods.CRYPT_E_NO_MATCH 
+					? WinVerifyTrustResult.FileNotSigned 
+					: WinVerifyTrustResult.UnhandledException;
 			}
 			catch (Exception)
 			{
-				return StatusValue.UnhandledException;
+				return WinVerifyTrustResult.UnhandledException;
 			}
 			finally
 			{
@@ -199,7 +197,7 @@ namespace mRemoteNG.Tools
 		{
 			// ReSharper disable InconsistentNaming
 			[DllImport("wintrust.dll", ExactSpelling = true, SetLastError = false, CharSet = CharSet.Unicode)]
-			public static extern int WinVerifyTrust([In]IntPtr hWnd, [In, MarshalAs(UnmanagedType.LPStruct)]Guid pgActionOID, [In]IntPtr pWVTData);
+			public static extern WinVerifyTrustResult WinVerifyTrust([In]IntPtr hWnd, [In, MarshalAs(UnmanagedType.LPStruct)]Guid pgActionOID, [In]IntPtr pWVTData);
 				
 			[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
             public class WinTrustData
