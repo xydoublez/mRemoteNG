@@ -204,12 +204,7 @@ namespace mRemoteNG.Tools
 			[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
             public class WINTRUST_DATA
 			{
-				public WINTRUST_DATA()
-				{
-					cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_DATA));
-				}
-
-			    private uint cbStruct;
+				private uint cbStruct;
 				public IntPtr pPolicyCallbackData;
 				public IntPtr pSIPClientData;
 				public uint dwUIChoice;
@@ -221,20 +216,26 @@ namespace mRemoteNG.Tools
 				public IntPtr pwszURLReference;
 				public uint dwProvFlags;
 				public uint dwUIContext;
+
+				public WINTRUST_DATA()
+				{
+					cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_DATA));
+				}
 			}
 				
 			[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
             public class WINTRUST_FILE_INFO
 			{
+				private uint cbStruct;
+				[MarshalAs(UnmanagedType.LPTStr)]
+				public string pcwszFilePath;
+				public IntPtr hFile;
+				public IntPtr pgKnownSubject;
+
 				public WINTRUST_FILE_INFO()
 				{
 					cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_FILE_INFO));
 				}
-
-			    private uint cbStruct;
-				[MarshalAs(UnmanagedType.LPTStr)]public string pcwszFilePath;
-				public IntPtr hFile;
-				public IntPtr pgKnownSubject;
 			}
 				
 			public const int CRYPT_E_NO_MATCH = unchecked ((int) 0x80092009);
