@@ -144,7 +144,7 @@ namespace mRemoteNG.Tools
 						return StatusValue.ThumbprintNotMatch;
 				}
 
-			    var trustFileInfo = new NativeMethods.WINTRUST_FILE_INFO {pcwszFilePath = filePath};
+			    var trustFileInfo = new NativeMethods.WINTRUST_FILE_INFO (filePath);
 			    trustFileInfoPointer = Marshal.AllocCoTaskMem(Marshal.SizeOf(trustFileInfo));
 				Marshal.StructureToPtr(trustFileInfo, trustFileInfoPointer, false);
 
@@ -224,17 +224,27 @@ namespace mRemoteNG.Tools
 			}
 				
 			[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-            public class WINTRUST_FILE_INFO
+            public class WINTRUST_FILE_INFO : IDisposable
 			{
-				private uint cbStruct;
-				[MarshalAs(UnmanagedType.LPTStr)]
-				public string pcwszFilePath;
+				private uint cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_FILE_INFO));
+				public IntPtr pcwszFilePath;
 				public IntPtr hFile;
 				public IntPtr pgKnownSubject;
 
-				public WINTRUST_FILE_INFO()
+				public WINTRUST_FILE_INFO(string filePath)
 				{
-					cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_FILE_INFO));
+					pcwszFilePath = Marshal.StringToCoTaskMemAuto(filePath);
+				}
+
+				private void ReleaseUnmanagedResources()
+				{
+					Marshal.FreeCoTaskMem(pcwszFilePath);
+				}
+
+				public void Dispose()
+				{
+					ReleaseUnmanagedResources();
+					GC.SuppressFinalize(this);
 				}
 			}
 				
