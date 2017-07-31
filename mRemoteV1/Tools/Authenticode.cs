@@ -23,7 +23,7 @@ namespace mRemoteNG.Tools
 		/// The style of display to present to the user when verifying trust 
 		/// for an assembly on this system.
 		/// </summary>
-		public DisplayValue Display { get; } = DisplayValue.None;
+		public WinTrustDataUiChoice Display { get; } = WinTrustDataUiChoice.None;
 
 		/// <summary>
 		/// Certificate revocation check options. This member can be set to 
@@ -31,7 +31,7 @@ namespace mRemoteNG.Tools
 		/// </summary>
 		public RevocationCheckOptions RevocationCheck { get; set; } = RevocationCheckOptions.WholeChain;
 
-		private DisplayContextValue DisplayContext { get; set; }
+		private WinTrustDataUiContext DisplayContext { get; set; }
 
 		/// <summary>
 		/// The parent form to use for any windows spawned by this class.
@@ -39,7 +39,7 @@ namespace mRemoteNG.Tools
 		private Form DisplayParentForm { get; set; }
 
 		#region Public Enums
-		public enum DisplayValue : uint
+		public enum WinTrustDataUiChoice : uint
 		{
 			/// <summary>
 			/// Display all UI.
@@ -64,7 +64,7 @@ namespace mRemoteNG.Tools
 		/// WinVerifyTrust function. This causes the text in the Authenticode
 		/// dialog box to match the action taken on the file.
 		/// </summary>
-		private enum DisplayContextValue : uint
+		private enum WinTrustDataUiContext : uint
 		{
 			/// <summary>
 			/// Use when calling WinVerifyTrust for a file that is to be run.
@@ -104,13 +104,49 @@ namespace mRemoteNG.Tools
 			/// of the WinVerifyTrust function. To ensure the WinVerifyTrust 
 			/// function does not attempt any network retrieval when 
 			/// verifying code signatures, WTD_CACHE_ONLY_URL_RETRIEVAL 
-			/// must be set in the dwProvFlags parameter.
+			/// must be set in the ProvFlags parameter.
 			/// </summary>
-			None = NativeMethods.WTD_REVOKE_NONE,
+			None = 0,
 			/// <summary>
 			/// Revocation checking will be done on the whole chain.
 			/// </summary>
-			WholeChain = NativeMethods.WTD_REVOKE_WHOLECHAIN
+			WholeChain = 1
+		}
+
+		public enum WinTrustDataChoice : uint
+		{
+			File = 1,
+			Catalog = 2,
+			Blob = 3,
+			Signer = 4,
+			Certificate = 5
+		}
+
+		public enum WinTrustDataStateAction : uint
+		{
+			Ignore = 0x00000000,
+			Verify = 0x00000001,
+			Close = 0x00000002,
+			AutoCache = 0x00000003,
+			AutoCacheFlush = 0x00000004
+		}
+
+		[Flags]
+		public enum WinTrustDataProvFlags : uint
+		{
+			UseIe4TrustFlag = 0x00000001,
+			NoIe4ChainFlag = 0x00000002,
+			NoPolicyUsageFlag = 0x00000004,
+			RevocationCheckNone = 0x00000010,
+			RevocationCheckEndCert = 0x00000020,
+			RevocationCheckChain = 0x00000040,
+			RevocationCheckChainExcludeRoot = 0x00000080,
+			SaferFlag = 0x00000100,        // Used by software restriction policies. Should not be used.
+			HashOnlyFlag = 0x00000200,
+			UseDefaultOsverCheck = 0x00000400,
+			LifetimeSigningFlag = 0x00000800,
+			CacheOnlyUrlRetrieval = 0x00001000,      // affects CRL retrieval and AIA retrieval
+			DisableMD2andMD4 = 0x00002000      // Win7 SP1+: Disallows use of MD2 or MD4 in the chain except for the root 
 		}
 		#endregion
 
@@ -155,12 +191,10 @@ namespace mRemoteNG.Tools
 				{
 					using (var winTrustData = new NativeMethods.WinTrustData(winTrustFileInfo)
 						{
-							dwUIChoice = (uint) Display,
-							fdwRevocationChecks = (uint) RevocationCheck,
-							dwUnionChoice = NativeMethods.WTD_CHOICE_FILE,
-							dwStateAction = NativeMethods.WTD_STATEACTION_IGNORE,
-							dwProvFlags = NativeMethods.WTD_DISABLE_MD2_MD4,
-							dwUIContext = (uint) DisplayContext
+							UiChoice = Display,
+							RevocationChecks = RevocationCheck,
+							ProvFlags = WinTrustDataProvFlags.DisableMD2andMD4,
+							UiContext = DisplayContext
 						})
 					{
 						trustDataPointer = Marshal.AllocCoTaskMem(Marshal.SizeOf(winTrustData));
@@ -207,15 +241,15 @@ namespace mRemoteNG.Tools
 				private uint cbStruct = (uint)Marshal.SizeOf(typeof(WinTrustData));
 				public IntPtr pPolicyCallbackData;
 				public IntPtr pSIPClientData;
-				public uint dwUIChoice;
-				public uint fdwRevocationChecks;
-				public uint dwUnionChoice;
+				public WinTrustDataUiChoice UiChoice;
+				public RevocationCheckOptions RevocationChecks = RevocationCheckOptions.None;
+				public WinTrustDataChoice dwUnionChoice = WinTrustDataChoice.File;
 				private readonly IntPtr FileInfoPtr;
-				public uint dwStateAction;
+				public WinTrustDataStateAction StateAction = WinTrustDataStateAction.Ignore;
 				public IntPtr hWVTStateData;
 				public IntPtr pwszURLReference;
-				public uint dwProvFlags;
-				public uint dwUIContext;
+				public WinTrustDataProvFlags ProvFlags;
+				public WinTrustDataUiContext UiContext;
 
 				public WinTrustData(WinTrustFileInfo winTrustFileInfo)
 				{
