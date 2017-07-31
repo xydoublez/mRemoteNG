@@ -144,11 +144,11 @@ namespace mRemoteNG.Tools
 						return StatusValue.ThumbprintNotMatch;
 				}
 
-			    var trustFileInfo = new NativeMethods.WINTRUST_FILE_INFO (filePath);
+			    var trustFileInfo = new NativeMethods.WinTrustFileInfo (filePath);
 			    trustFileInfoPointer = Marshal.AllocCoTaskMem(Marshal.SizeOf(trustFileInfo));
 				Marshal.StructureToPtr(trustFileInfo, trustFileInfoPointer, false);
 
-			    var trustData = new NativeMethods.WINTRUST_DATA
+			    var trustData = new NativeMethods.WinTrustData
 			    {
 			        dwUIChoice = (uint) Display,
 			        fdwRevocationChecks = (uint) RevocationCheck,
@@ -202,7 +202,7 @@ namespace mRemoteNG.Tools
 			public static extern int WinVerifyTrust([In]IntPtr hWnd, [In, MarshalAs(UnmanagedType.LPStruct)]Guid pgActionOID, [In]IntPtr pWVTData);
 				
 			[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-            public class WINTRUST_DATA
+            public class WinTrustData
 			{
 				private uint cbStruct;
 				public IntPtr pPolicyCallbackData;
@@ -217,28 +217,28 @@ namespace mRemoteNG.Tools
 				public uint dwProvFlags;
 				public uint dwUIContext;
 
-				public WINTRUST_DATA()
+				public WinTrustData()
 				{
-					cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_DATA));
+					cbStruct = (uint)Marshal.SizeOf(typeof(WinTrustData));
 				}
 			}
 				
 			[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-            public class WINTRUST_FILE_INFO : IDisposable
+            public class WinTrustFileInfo : IDisposable
 			{
-				private uint cbStruct = (uint)Marshal.SizeOf(typeof(WINTRUST_FILE_INFO));
-				public IntPtr pcwszFilePath;
+				private uint cbStruct = (uint)Marshal.SizeOf(typeof(WinTrustFileInfo));
+				private readonly IntPtr pszFilePath;
 				public IntPtr hFile;
 				public IntPtr pgKnownSubject;
 
-				public WINTRUST_FILE_INFO(string filePath)
+				public WinTrustFileInfo(string filePath)
 				{
-					pcwszFilePath = Marshal.StringToCoTaskMemAuto(filePath);
+					pszFilePath = Marshal.StringToCoTaskMemAuto(filePath);
 				}
 
 				private void ReleaseUnmanagedResources()
 				{
-					Marshal.FreeCoTaskMem(pcwszFilePath);
+					Marshal.FreeCoTaskMem(pszFilePath);
 				}
 
 				public void Dispose()
