@@ -1,4 +1,3 @@
-#if !PORTABLE
 using System;
 using System.Windows.Forms;
 using System.IO;
@@ -6,68 +5,153 @@ using System.Security.Cryptography.X509Certificates;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Reflection;
-using System.ComponentModel;
 // ReSharper disable UnusedMember.Local
 // ReSharper disable NotAccessedField.Local
 // ReSharper disable UnusedAutoPropertyAccessor.Local
 #pragma warning disable 414
 #pragma warning disable 169
 
-
 namespace mRemoteNG.Tools
 {
+	/// <summary>
+	/// This class provides Authenticode signature verification services in 
+	/// managed C# code.
+	/// </summary>
 	public class Authenticode
 	{
-        #region Public Methods
-		public Authenticode(string filePath)
+		private string _thumbprint;
+		private int _trustProviderErrorCode;
+
+		/// <summary>
+		/// The style of display to present to the user when verifying trust 
+		/// for an assembly on this system.
+		/// </summary>
+		public DisplayValue Display { get; } = DisplayValue.None;
+
+		/// <summary>
+		/// Certificate revocation check options. This member can be set to 
+		/// add revocation checking to that done by the selected policy provider.
+		/// </summary>
+		public RevocationCheckOptions RevocationCheck { get; set; } = RevocationCheckOptions.WholeChain;
+
+		private DisplayContextValue DisplayContext { get; set; }
+		private Form DisplayParentForm { get; set; }
+
+		#region Public Enums
+		public enum DisplayValue : uint
 		{
-			FilePath = filePath;
+			/// <summary>
+			/// Display all UI.
+			/// </summary>
+			All = NativeMethods.WTD_UI_ALL,
+			/// <summary>
+			/// Display no UI.
+			/// </summary>
+			None = NativeMethods.WTD_UI_NONE,
+			/// <summary>
+			/// Do not display any negative UI.
+			/// </summary>
+			NoBad = NativeMethods.WTD_UI_NOBAD,
+			/// <summary>
+			/// Do not display any positive UI.
+			/// </summary>
+			NoGood = NativeMethods.WTD_UI_NOGOOD
 		}
-			
-		public StatusValue Verify()
+
+		/// <summary>
+		/// Specifies the user interface context for the
+		/// WinVerifyTrust function. This causes the text in the Authenticode
+		/// dialog box to match the action taken on the file.
+		/// </summary>
+		private enum DisplayContextValue : uint
 		{
+			/// <summary>
+			/// Use when calling WinVerifyTrust for a file that is to be run.
+			/// </summary>
+			Execute = NativeMethods.WTD_UICONTEXT_EXECUTE,
+			/// <summary>
+			/// Use when calling WinVerifyTrust for a file that is to be installed.
+			/// </summary>
+			Install = NativeMethods.WTD_UICONTEXT_INSTALL
+		}
+
+		public enum StatusValue
+		{
+			Unknown = 0,
+			Verified,
+			FileNotExist,
+			FileEmpty,
+			NoSignature,
+			ThumbprintNotMatch,
+			TrustProviderError,
+			UnhandledException
+		}
+
+		public enum RevocationCheckOptions : uint
+		{
+			/// <summary>
+			/// No additional revocation checking will be done when the 
+			/// WTD_REVOKE_NONE flag is used in conjunction with the 
+			/// HTTPSPROV_ACTION value set in the pgActionID parameter 
+			/// of the WinVerifyTrust function. To ensure the WinVerifyTrust 
+			/// function does not attempt any network retrieval when 
+			/// verifying code signatures, WTD_CACHE_ONLY_URL_RETRIEVAL 
+			/// must be set in the dwProvFlags parameter.
+			/// </summary>
+			None = NativeMethods.WTD_REVOKE_NONE,
+			/// <summary>
+			/// Revocation checking will be done on the whole chain.
+			/// </summary>
+			WholeChain = NativeMethods.WTD_REVOKE_WHOLECHAIN
+		}
+		#endregion
+
+		public StatusValue Verify(string filePath)
+		{
+			return Verify(filePath, "");
+		}
+
+		public StatusValue VerifyWithThumbprint(string filePath, string thumbprintToMatch)
+		{
+			if (string.IsNullOrEmpty(thumbprintToMatch))
+				throw new ArgumentException(@"Cannot be null or empty", nameof(thumbprintToMatch));
+
+			return Verify(filePath, thumbprintToMatch);
+		}
+
+		private StatusValue Verify(string filePath, string thumbprintToMatch)
+		{
+			if (string.IsNullOrEmpty(filePath))
+				throw new ArgumentException(@"Cannot be null or empty", nameof(filePath));
+
 			var trustFileInfoPointer = default(IntPtr);
 			var trustDataPointer = default(IntPtr);
 			try
 			{
-				var fileInfo = new FileInfo(FilePath);
+				var fileInfo = new FileInfo(filePath);
 				if (!fileInfo.Exists)
-				{
-					Status = StatusValue.FileNotExist;
-					return Status;
-				}
+					return StatusValue.FileNotExist;
+
 				if (fileInfo.Length == 0)
-				{
-					Status = StatusValue.FileEmpty;
-					return Status;
-				}
+					return StatusValue.FileEmpty;
 					
-				if (RequireThumbprintMatch)
+				if (!string.IsNullOrEmpty(thumbprintToMatch))
 				{
-					if (string.IsNullOrEmpty(ThumbprintToMatch))
-					{
-						Status = StatusValue.NoThumbprintToMatch;
-						return Status;
-					}
-						
-					var certificate = X509Certificate.CreateFromSignedFile(FilePath);
+					var certificate = X509Certificate.CreateFromSignedFile(filePath);
 					var certificate2 = new X509Certificate2(certificate);
 					_thumbprint = certificate2.Thumbprint;
-					if (_thumbprint != ThumbprintToMatch)
-					{
-						Status = StatusValue.ThumbprintNotMatch;
-						return Status;
-					}
+					if (_thumbprint != thumbprintToMatch)
+						return StatusValue.ThumbprintNotMatch;
 				}
 
-			    var trustFileInfo = new NativeMethods.WINTRUST_FILE_INFO {pcwszFilePath = FilePath};
+			    var trustFileInfo = new NativeMethods.WINTRUST_FILE_INFO {pcwszFilePath = filePath};
 			    trustFileInfoPointer = Marshal.AllocCoTaskMem(Marshal.SizeOf(trustFileInfo));
 				Marshal.StructureToPtr(trustFileInfo, trustFileInfoPointer, false);
 
 			    var trustData = new NativeMethods.WINTRUST_DATA
 			    {
 			        dwUIChoice = (uint) Display,
-			        fdwRevocationChecks = NativeMethods.WTD_REVOKE_WHOLECHAIN,
+			        fdwRevocationChecks = (uint) RevocationCheck,
 			        dwUnionChoice = NativeMethods.WTD_CHOICE_FILE,
 			        pFile = trustFileInfoPointer,
 			        dwStateAction = NativeMethods.WTD_STATEACTION_IGNORE,
@@ -84,151 +168,38 @@ namespace mRemoteNG.Tools
 				switch (_trustProviderErrorCode)
 				{
 					case NativeMethods.TRUST_E_NOSIGNATURE:
-						Status = StatusValue.NoSignature;
-						break;
+						return StatusValue.NoSignature;
 					case NativeMethods.TRUST_E_SUBJECT_NOT_TRUSTED:
 						break;
-							
 				}
-				if (_trustProviderErrorCode != 0)
-				{
-					Status = StatusValue.TrustProviderError;
-					return Status;
-				}
-					
-				Status = StatusValue.Verified;
-				return Status;
+				return _trustProviderErrorCode != 0 ? StatusValue.TrustProviderError : StatusValue.Verified;
 			}
 			catch (CryptographicException ex)
 			{
 				var hResultProperty = ex.GetType().GetProperty("HResult", BindingFlags.NonPublic | BindingFlags.Instance);
 				var hResult = Convert.ToInt32(hResultProperty.GetValue(ex, null));
-				if (hResult == NativeMethods.CRYPT_E_NO_MATCH)
-				{
-					Status = StatusValue.NoSignature;
-					return Status;
-				}
-				else
-				{
-					Status = StatusValue.UnhandledException;
-					Exception = ex;
-					return Status;
-				}
+				return hResult == NativeMethods.CRYPT_E_NO_MATCH ? StatusValue.NoSignature : StatusValue.UnhandledException;
 			}
-			catch (Exception ex)
+			catch (Exception)
 			{
-				Status = StatusValue.UnhandledException;
-				Exception = ex;
-				return Status;
+				return StatusValue.UnhandledException;
 			}
 			finally
 			{
 				if (trustDataPointer != IntPtr.Zero)
-				{
 					Marshal.FreeCoTaskMem(trustDataPointer);
-				}
+
 				if (trustFileInfoPointer != IntPtr.Zero)
-				{
 					Marshal.FreeCoTaskMem(trustFileInfoPointer);
-				}
 			}
 		}
-        #endregion
-			
-        #region Public Properties
 
-	    private DisplayValue Display { get; set; } = DisplayValue.None;
-
-	    private DisplayContextValue DisplayContext {get; set;}
-	    private Form DisplayParentForm {get; set;}
-	    internal Exception Exception {get; private set;}
-	    private string FilePath {get; set;}
-        internal bool RequireThumbprintMatch { get; set;}
-
-	    internal StatusValue Status { get; private set; }
-
-	    public string GetStatusMessage()
-	    {
-	        // ReSharper disable once SwitchStatementMissingSomeCases
-	        switch (Status)
-	        {
-	            case StatusValue.Verified:
-	                return "The file was verified successfully.";
-	            case StatusValue.FileNotExist:
-	                return "The specified file does not exist.";
-	            case StatusValue.FileEmpty:
-	                return "The specified file is empty.";
-	            case StatusValue.NoSignature:
-	                return "The specified file is not digitally signed.";
-	            case StatusValue.NoThumbprintToMatch:
-	                return "A thumbprint match is required but no thumbprint to match against was specified.";
-	            case StatusValue.ThumbprintNotMatch:
-	                /* (char)0x2260 == the "not equal to" symbol (which I cannot print in here without changing the encoding of the file)
-                     * Fancy...
-                     * 
-                     * "<>" is  fiarly cryptic for non-programers
-                     * So is "!="
-                     * "=/=" gets the job done, no?
-                     * What about plain old English (or localized value): X is not equal to Y?
-                     * :P
-                     */
-	                return $"The thumbprint does not match. {_thumbprint} {(char) 0x2260} {ThumbprintToMatch}.";
-	            case StatusValue.TrustProviderError:
-	                var ex = new Win32Exception(_trustProviderErrorCode);
-	                return $"The trust provider returned an error. {ex.Message}";
-	            case StatusValue.UnhandledException:
-	                return $"An unhandled exception occurred. {Exception.Message}";
-	            default:
-	                return "The status is unknown.";
-	        }
-	    }
-			
-		private string _thumbprint;
-
-        internal string ThumbprintToMatch { get; set;}
-			
-		private int _trustProviderErrorCode;
-
-	    #endregion
-		
-        #region Public Enums
-
-	    private enum DisplayValue : uint
-		{
-			Unknown = 0,
-			All = NativeMethods.WTD_UI_ALL,
-			None = NativeMethods.WTD_UI_NONE,
-			NoBad = NativeMethods.WTD_UI_NOBAD,
-			NoGood = NativeMethods.WTD_UI_NOGOOD
-		}
-
-	    private enum DisplayContextValue : uint
-		{
-			Execute = NativeMethods.WTD_UICONTEXT_EXECUTE,
-			Install = NativeMethods.WTD_UICONTEXT_INSTALL
-		}
-			
-		public enum StatusValue
-		{
-			Unknown = 0,
-			Verified,
-			FileNotExist,
-			FileEmpty,
-			NoSignature,
-			NoThumbprintToMatch,
-			ThumbprintNotMatch,
-			TrustProviderError,
-			UnhandledException
-		}
-        #endregion
-			
         #region Protected Classes
-
 	    private static class NativeMethods
 		{
 			// ReSharper disable InconsistentNaming
-			[DllImport("wintrust.dll", CharSet = CharSet.Auto, SetLastError = false)]
-            public static extern int WinVerifyTrust([In()]IntPtr hWnd, [In(), MarshalAs(UnmanagedType.LPStruct)]Guid pgActionOID, [In()]IntPtr pWVTData);
+			[DllImport("wintrust.dll", ExactSpelling = true, SetLastError = false, CharSet = CharSet.Unicode)]
+			public static extern int WinVerifyTrust([In]IntPtr hWnd, [In, MarshalAs(UnmanagedType.LPStruct)]Guid pgActionOID, [In]IntPtr pWVTData);
 				
 			[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
             public class WINTRUST_DATA
@@ -275,6 +246,7 @@ namespace mRemoteNG.Tools
 				
 			public const uint WTD_CHOICE_FILE = 1;
 			public const uint WTD_DISABLE_MD2_MD4 = 0x2000;
+			public const uint WTD_REVOKE_NONE = 0;
 			public const uint WTD_REVOKE_WHOLECHAIN = 1;
 				
 			public const uint WTD_STATEACTION_IGNORE = 0x0;
@@ -293,4 +265,3 @@ namespace mRemoteNG.Tools
         #endregion
 	}
 }
-#endif
